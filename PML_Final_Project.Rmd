@@ -1,0 +1,107 @@
+---
+title: "Practical Machine Learning: Identify Exercise Classe"
+author: "M Pearson"
+date: "January 7, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Overview
+The explosion in personal fitness trackers has produced an incredible amount of data related to how much of a given activity users do, however it is rare to quantify how *well* the work is done.  For this project we took the data from a study on barbell lifts that combined a classification of the quality of the lifts with data from accelerometers on the belt, forearm, arm and dumbell to see if we could create a predictive model that could accurately predict the 'classe' of exercise from these data values.  MOre information on this study is avialable at their website: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+To predict these data we used a large training set to create 3 classification fitting models (Tree Fit, Random Forest, Boosting) and then used the model with the best performance (in this case Random Forest) to make predictions for 20 test cases with unknown classe values.
+
+The process for this project was as follows, and these steps are detailed in the following report:
+1. Load Data 
+2. clean data
+3. Split the cleaned training data set on the output variable (classe) into a training set for model development and a validation set for testing model performance 
+4. Build models on training data and Validate on validation set.
+5. Compare model performance and Use best model to predict classe on the testing data
+
+
+# Data Analysis
+
+## 1. Data Loading
+Data files were downloaded from [website] into the R working directory and then loaded into R. R libraries for analysis were loaded at this time as well.
+
+```{r read_data}
+train.file <- "pml-training.csv"    
+training <- read.csv(train.file)
+test.file <- "pml-testing.csv"  
+testing <- read.csv(test.file) 
+library(dplyr)
+library(caret)
+library(rpart)
+```
+
+## 2. Data Cleaning
+An initial review of the training data shows that the data consists of `r dim(training)[1]` observartions of `r dim(training)[2]` variables, and that the dataset contains a lot of NA values (mean NA of `r round(100*(mean(is.na(training))),2)`)%. A quick review of the data suggested that the majority of NA values were in particular columns, while Div/0 errors were concentrated in factor variables. To simply the analysis we filtered out columns with NA values, identifying columns (name, timestamp, etc.) and factor variables, and then added the classe factor variable back to th dataset. This reduced the data set down to 54 variables, and the results of the fitting models were sufficiently accurate that we were satisfied we could exclude these columns in our analysis.
+
+``` {R complete_Data}
+# Filter out NA columns
+colNA_list <- training %>% summarize_all(funs(sum(is.na(.)) / length(.)))
+train_ss <- training[,colNA_list == 0]
+# Remove Factor columns then add 'classe' factor back in
+tnf <- Filter(Negate(is.factor), train_ss)
+tnf <- cbind(tnf,train_ss[,93])
+names(tnf)[57] <- "classe"
+# Remove Identification columns
+tn <- tnf[,-c(1:3)]
+```
+
+### 3. Partition Data
+The training data was partioned on the classe variable into a training set (70% of observations) and validation set (30% of observations) 
+``` {r data_partition}
+set.seed(2019)
+inTrain <- createDataPartition(y=tn$classe, p=0.7, list=FALSE)  
+td <- tn[inTrain,]
+vd <- tn[-inTrain,]
+```
+
+### 4. Fit predictive models to data
+We fit 3 types of classification predictive models to the training partition of the training data: a Tree Fit, Random Forest, and Generalized Boosted model. We then used these models to predict the classe value for the validation data, and then used the confusionMatrix function to compare performance between the predicted and actual values. 
+
+#### Tree Fit
+``` {r tree_fit, cache=TRUE}
+modfit <- train(classe~., method="rpart",data=td) # Build Model on training data td
+pred <- predict(modfit,newdata=vd)  # Use model to predict values from validation data vd
+cmtf <- confusionMatrix(pred,vd$classe) # Generate Confusion Matrix of Data
+cmtf
+```
+
+#### Random Forest
+``` {r random forest, cache=TRUE}
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+modRF <- train(classe ~ ., data=td, method="rf",trControl=controlRF)
+modRF$finalModel
+predictRF <- predict(modRF, newdata=vd)
+cmRF <- confusionMatrix(predictRF,vd$classe)
+cmRF
+```
+
+#### Generalized Boosted Model (GBM)
+``` {r boosted, cache=TRUE}
+modGBM <- train(classe ~., method="gbm",data=vd,verbose=FALSE)
+predGBM <- predict(modGBM, newdata = vd)
+cmGBM <-  confusionMatrix(predGBM,vd$classe)
+cmGBM
+
+```
+
+### Predictions on testing data
+The oVerall accuraccy for each Model (from predictions on the validation data set) are shown in the table below.  As you can see the Tree Fit performs fairly poorly while the Random Forest and Generalized Boosting model both produce models with >99% accuracy.  
+
+| Model               | Accuracy
+| -----------------   | ----------------
+| Tree Fit            | `r round(cmtf$overall['Accuracy'],3)`
+| Random Forest       | `r round(cmRF$overall['Accuracy'],3)`
+| Generalized Boosted | `r round(cmGBM$overall['Accuracy'],3) `
+
+We choose to use the Random Forest model for our test predictions. The results of these predictions on the 20 test cases are shown below.
+
+``` {r test predict, cache=TRUE}
+testPredict <- predict(modRF,newdata = testing)
+testPredict
+```
